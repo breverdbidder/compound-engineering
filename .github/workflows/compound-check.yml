@@ -1,0 +1,83 @@
+# .github/workflows/compound-check.yml
+# Reusable workflow: verifies compound engineering hygiene
+# 
+# Usage in other repos:
+#   jobs:
+#     compound-check:
+#       uses: breverdbidder/compound-engineering/.github/workflows/compound-check.yml@main
+
+name: Compound Engineering Check
+
+on:
+  workflow_call:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  compound-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check CLAUDE.md exists
+        run: |
+          if [ ! -f "CLAUDE.md" ]; then
+            echo "❌ CLAUDE.md not found. Run: curl -sSL https://raw.githubusercontent.com/breverdbidder/compound-engineering/main/scripts/install.sh | bash"
+            exit 1
+          fi
+          echo "✅ CLAUDE.md exists"
+
+      - name: Check slash commands installed
+        run: |
+          MISSING=0
+          for cmd in boot plan review compound; do
+            if [ ! -f ".claude/commands/${cmd}.md" ]; then
+              echo "❌ Missing .claude/commands/${cmd}.md"
+              MISSING=1
+            fi
+          done
+          if [ "$MISSING" -eq 1 ]; then
+            echo "Run install.sh to fix missing commands"
+            exit 1
+          fi
+          echo "✅ All slash commands present"
+
+      - name: Check compound freshness
+        run: |
+          # Extract last compounded date from CLAUDE.md
+          LAST_DATE=$(grep -oP 'Last compounded:\*\* \K[\d-]+' CLAUDE.md || echo "never")
+          
+          if [ "$LAST_DATE" = "never" ]; then
+            echo "⚠️ CLAUDE.md has never been compounded. Run /compound after your next session."
+            exit 0
+          fi
+          
+          # Calculate days since last compound
+          LAST_TS=$(date -d "$LAST_DATE" +%s 2>/dev/null || echo "0")
+          NOW_TS=$(date +%s)
+          DAYS_AGO=$(( (NOW_TS - LAST_TS) / 86400 ))
+          
+          if [ "$DAYS_AGO" -gt 7 ]; then
+            echo "⚠️ Last compound was ${DAYS_AGO} days ago (${LAST_DATE}). Consider running /compound."
+          else
+            echo "✅ Last compound: ${LAST_DATE} (${DAYS_AGO} days ago)"
+          fi
+
+      - name: Count learnings
+        run: |
+          COUNT=$(grep -c "^####" CLAUDE.md 2>/dev/null || echo "0")
+          echo "📚 Total compounded learnings: ${COUNT}"
+
+      - name: Check TODO.md exists
+        run: |
+          if [ ! -f "TODO.md" ]; then
+            echo "⚠️ TODO.md not found. Recommended for task tracking."
+          else
+            OPEN=$(grep -c "^\- \[ \]" TODO.md 2>/dev/null || echo "0")
+            DONE=$(grep -c "^\- \[x\]" TODO.md 2>/dev/null || echo "0")
+            echo "📋 TODO: ${OPEN} open, ${DONE} completed"
+          fi
