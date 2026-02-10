@@ -1,0 +1,72 @@
+# .github/workflows/sync-commands.yml
+# When slash commands are updated in this repo, sync them to all installed repos.
+# Triggered on push to main when .claude/commands/ files change.
+
+name: Sync Slash Commands
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.claude/commands/**'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        repo:
+          - breverdbidder/zonewise-agents
+          - breverdbidder/zonewise-web
+          - breverdbidder/zonewise-desktop
+          - breverdbidder/zonewise-modal
+          - breverdbidder/zonewise
+          # Add new repos here as they adopt compound engineering
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync commands to ${{ matrix.repo }}
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          REPO="${{ matrix.repo }}"
+          echo "📤 Syncing slash commands to ${REPO}"
+          
+          for cmd in boot plan review compound; do
+            FILE=".claude/commands/${cmd}.md"
+            CONTENT=$(base64 -w 0 "${FILE}")
+            
+            # Check if file exists in target repo
+            EXISTING_SHA=$(curl -s -H "Authorization: token ${GH_TOKEN}" \
+              "https://api.github.com/repos/${REPO}/contents/${FILE}" \
+              | jq -r '.sha // empty')
+            
+            # Build request body
+            if [ -n "$EXISTING_SHA" ]; then
+              BODY=$(jq -n \
+                --arg msg "sync: update ${cmd} command from compound-engineering" \
+                --arg content "$CONTENT" \
+                --arg sha "$EXISTING_SHA" \
+                '{message: $msg, content: $content, sha: $sha}')
+            else
+              BODY=$(jq -n \
+                --arg msg "sync: add ${cmd} command from compound-engineering" \
+                --arg content "$CONTENT" \
+                '{message: $msg, content: $content}')
+            fi
+            
+            # Push to target repo
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              -X PUT \
+              -H "Authorization: token ${GH_TOKEN}" \
+              -H "Content-Type: application/json" \
+              "https://api.github.com/repos/${REPO}/contents/${FILE}" \
+              -d "$BODY")
+            
+            if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
+              echo "  ✅ ${cmd}.md → ${REPO}"
+            else
+              echo "  ⚠️ ${cmd}.md → ${REPO} (HTTP ${HTTP_CODE} — repo may not exist yet)"
+            fi
+          done
